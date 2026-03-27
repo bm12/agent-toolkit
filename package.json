@@ -1,0 +1,49 @@
+{
+  "name": "agent-toolkit",
+  "version": "1.0.0",
+  "description": "Shared AI agent infrastructure: Codex/Qwen CLI executors, error handling, retry, fallback",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bm12/agent-toolkit.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "codex",
+    "qwen",
+    "cli",
+    "executor",
+    "retry",
+    "fallback"
+  ],
+  "author": "bm12",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/bm12/agent-toolkit/issues"
+  },
+  "homepage": "https://github.com/bm12/agent-toolkit#readme",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
