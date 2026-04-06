@@ -6,7 +6,10 @@
  */
 
 import { spawn } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { AgentConfig, AgentRunOptions, AgentRunResult, ExecutorHooks } from './types.js';
 import { DEFAULT_TIMEOUT } from './types.js';
 import { classifyCodexError, throwClassifiedError } from '../errors/classifiers.js';
@@ -57,9 +60,17 @@ export async function execAgent<T = unknown>(
     args.push('--output-schema', options.outputSchema);
   }
 
-  // Output file
-  if (options.outputFile) {
-    args.push('-o', options.outputFile);
+  // Output file: if outputSchema is specified but no outputFile, auto-generate
+  // a temp file. Codex writes structured output to the -o file, not to stdout
+  // (stdout only has JSONL events when --json is used).
+  const effectiveOutputFile = options.outputFile
+    ?? (options.outputSchema
+      ? join(tmpdir(), `codex-output-${randomUUID()}.json`)
+      : undefined);
+  const isTempOutputFile = !options.outputFile && !!effectiveOutputFile;
+
+  if (effectiveOutputFile) {
+    args.push('-o', effectiveOutputFile);
   }
 
   // Prompt as the last argument
@@ -146,13 +157,18 @@ export async function execAgent<T = unknown>(
         let raw = '';
         let parsed: T | null = null;
 
-        // Strategy 1: Try reading from output file (if -o was specified)
-        if (options.outputFile) {
+        // Strategy 1: Read from output file (-o flag, auto-generated or explicit)
+        if (effectiveOutputFile) {
           try {
-            raw = await readFile(options.outputFile, 'utf-8');
+            raw = await readFile(effectiveOutputFile, 'utf-8');
             logger?.debug(`[Codex] Read output file: ${raw.substring(0, 200)}...`);
           } catch {
             logger?.debug(`[Codex] Output file not found, falling back to event extraction`);
+          } finally {
+            // Clean up auto-generated temp file
+            if (isTempOutputFile) {
+              unlink(effectiveOutputFile).catch(() => {});
+            }
           }
         }
 
@@ -184,6 +200,10 @@ export async function execAgent<T = unknown>(
           agentUsed: 'codex',
         });
       } catch (error) {
+        // Clean up temp file on error path too
+        if (isTempOutputFile && effectiveOutputFile) {
+          unlink(effectiveOutputFile).catch(() => {});
+        }
         reject(
           new Error(
             `Failed to parse Codex output: ${error instanceof Error ? error.message : String(error)}`,
