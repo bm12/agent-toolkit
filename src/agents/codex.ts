@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises';
 import type { AgentConfig, AgentRunOptions, AgentRunResult, ExecutorHooks } from './types.js';
 import { DEFAULT_TIMEOUT } from './types.js';
 import { classifyCodexError, throwClassifiedError } from '../errors/classifiers.js';
-import { parseJsonlEvents, extractJson } from '../parsers/output.js';
+import { parseJsonlEvents, extractJson, extractCodexResponse } from '../parsers/output.js';
 
 /**
  * Execute the Codex CLI agent with the given prompt and configuration.
@@ -146,20 +146,29 @@ export async function execAgent<T = unknown>(
         let raw = '';
         let parsed: T | null = null;
 
-        // Try reading from output file first (if -o was specified)
+        // Strategy 1: Try reading from output file (if -o was specified)
         if (options.outputFile) {
           try {
             raw = await readFile(options.outputFile, 'utf-8');
             logger?.debug(`[Codex] Read output file: ${raw.substring(0, 200)}...`);
           } catch {
-            logger?.debug(`[Codex] Output file not found, falling back to stdout`);
+            logger?.debug(`[Codex] Output file not found, falling back to event extraction`);
           }
         }
 
-        // Fallback to stdout if no output file or file not found
+        // Strategy 2: Extract agent response text from JSONL events
+        if (!raw) {
+          const responseText = extractCodexResponse(events);
+          if (responseText) {
+            raw = responseText;
+            logger?.debug(`[Codex] Extracted response from JSONL events: ${raw.substring(0, 200)}...`);
+          }
+        }
+
+        // Strategy 3: Last resort — use raw stdout (JSONL stream)
         if (!raw && stdoutRaw) {
           raw = stdoutRaw;
-          logger?.debug(`[Codex] Using stdout as output source`);
+          logger?.warn(`[Codex] No structured response found, using raw stdout as fallback`);
         }
 
         // Parse JSON from raw output

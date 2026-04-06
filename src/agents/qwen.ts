@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import type { AgentConfig, AgentRunOptions, AgentRunResult, ExecutorHooks } from './types.js';
 import { DEFAULT_TIMEOUT } from './types.js';
 import { classifyQwenError, throwClassifiedError } from '../errors/classifiers.js';
-import { extractQwenResult } from '../parsers/output.js';
+import { extractQwenResponse, extractJson } from '../parsers/output.js';
 
 /**
  * Execute the Qwen Code CLI agent with the given prompt and configuration.
@@ -114,17 +114,30 @@ export async function execAgent<T = unknown>(
       }
 
       try {
-        const parsed = extractQwenResult<T>(stdout, stderr);
+        // Extract the agent's response text from event stream
+        const responseText = extractQwenResponse(stdout, stderr);
+
+        // Parse JSON from the extracted response text
+        const parsed = extractJson<T>(responseText);
 
         resolve({
           parsed,
-          raw: stdout,
+          raw: responseText,
           stdout,
           stderr,
           agentUsed: 'qwen',
         });
       } catch (error) {
-        reject(error);
+        // extractQwenResponse may throw on missing/error events;
+        // fall back to raw stdout so consumers can inspect it
+        logger?.warn(`[Qwen] Failed to extract response: ${error instanceof Error ? error.message : String(error)}`);
+        resolve({
+          parsed: null,
+          raw: stdout,
+          stdout,
+          stderr,
+          agentUsed: 'qwen',
+        });
       }
     });
   });

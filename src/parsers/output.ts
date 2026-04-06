@@ -84,7 +84,75 @@ export function parseJsonlEvents(stdout: string): Record<string, unknown>[] {
 }
 
 // ---------------------------------------------------------------------------
-// Qwen Result Extraction
+// Codex Response Extraction from JSONL Events
+// ---------------------------------------------------------------------------
+
+/**
+ * Content item within a Codex message event.
+ */
+interface CodexContentItem {
+  type?: string;
+  text?: string;
+}
+
+/**
+ * Item within a Codex JSONL event.
+ */
+interface CodexItem {
+  id?: string;
+  type?: string;
+  text?: string;
+  content?: CodexContentItem[];
+}
+
+/**
+ * Extract the final agent response text from parsed Codex JSONL events.
+ *
+ * Codex CLI with `--json` emits JSONL events to stdout. The agent's final
+ * response is typically in `item.completed` events where `item.type` is
+ * `"message"`. The text content is in `item.content[]` entries with
+ * `type === "output_text"` (or similar text types).
+ *
+ * Falls back to collecting text from all `item.completed` events with
+ * `item.type === "message"` if no `output_text` content is found.
+ *
+ * @param events - Parsed JSONL event objects from `parseJsonlEvents()`
+ * @returns Extracted response text, or empty string if no message found
+ */
+export function extractCodexResponse(events: Record<string, unknown>[]): string {
+  const textParts: string[] = [];
+
+  for (const event of events) {
+    // Look for item.completed events with message-type items
+    if (event.type !== 'item.completed') continue;
+
+    const item = event.item as CodexItem | undefined;
+    if (!item) continue;
+
+    if (item.type === 'message') {
+      // Extract text from content array (preferred path)
+      if (Array.isArray(item.content)) {
+        for (const contentItem of item.content) {
+          if (
+            contentItem.text &&
+            (contentItem.type === 'output_text' || contentItem.type === 'text')
+          ) {
+            textParts.push(contentItem.text);
+          }
+        }
+      }
+      // Fallback: item-level text field
+      if (textParts.length === 0 && item.text) {
+        textParts.push(item.text);
+      }
+    }
+  }
+
+  return textParts.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Qwen Response Extraction
 // ---------------------------------------------------------------------------
 
 interface QwenEvent {
@@ -94,23 +162,24 @@ interface QwenEvent {
 }
 
 /**
- * Extract a typed result from Qwen JSON event array stdout.
+ * Extract the raw agent response text from Qwen JSON event array stdout.
  *
  * The Qwen CLI with `--output-format json` produces a JSON array of event
  * objects on stdout. This function:
  * 1. Parses the JSON array
  * 2. Finds the event with `type === 'result'`
  * 3. Checks for `is_error` flag and classifies errors
- * 4. Extracts the `.result` text field
- * 5. Strips markdown code-block wrappers if present
- * 6. JSON.parses the inner content
+ * 4. Returns the raw `.result` text (before JSON parsing)
+ *
+ * This is the Qwen equivalent of `extractCodexResponse()` — it extracts
+ * the agent's final text from the structured event stream.
  *
  * @param stdout - Raw stdout from Qwen CLI
  * @param stderr - Optional stderr for error classification
- * @returns Parsed result object
- * @throws Error if no result event found or parsing fails
+ * @returns Raw response text from the agent
+ * @throws Error if no result event found, is_error flag set, or empty result
  */
-export function extractQwenResult<T = unknown>(stdout: string, stderr = ''): T {
+export function extractQwenResponse(stdout: string, stderr = ''): string {
   // 1. Parse the JSON array of events
   const events: QwenEvent[] = JSON.parse(stdout);
 
@@ -133,7 +202,24 @@ export function extractQwenResult<T = unknown>(stdout: string, stderr = ''): T {
     throw new Error('Qwen result event has empty result field');
   }
 
-  // 4. Strip markdown code blocks if present and parse JSON
+  return agentText;
+}
+
+/**
+ * Extract a typed result from Qwen JSON event array stdout.
+ *
+ * Convenience wrapper around `extractQwenResponse()` that additionally
+ * strips markdown code-block wrappers and JSON.parses the content.
+ *
+ * @param stdout - Raw stdout from Qwen CLI
+ * @param stderr - Optional stderr for error classification
+ * @returns Parsed result object
+ * @throws Error if no result event found or parsing fails
+ */
+export function extractQwenResult<T = unknown>(stdout: string, stderr = ''): T {
+  const agentText = extractQwenResponse(stdout, stderr);
+
+  // Strip markdown code blocks if present and parse JSON
   const jsonMatch = agentText.match(/```(?:json)?\s*([\s\S]*?)```/);
   const jsonStr = jsonMatch ? jsonMatch[1].trim() : agentText.trim();
 
