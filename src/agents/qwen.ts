@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import type { AgentConfig, AgentRunOptions, AgentRunResult, ExecutorHooks } from './types.js';
 import { DEFAULT_TIMEOUT } from './types.js';
 import { classifyQwenError, throwClassifiedError } from '../errors/classifiers.js';
+import { AgentError } from '../errors/classes.js';
 import { extractQwenResponse, extractJson } from '../parsers/output.js';
 
 /**
@@ -128,8 +129,15 @@ export async function execAgent<T = unknown>(
           agentUsed: 'qwen',
         });
       } catch (error) {
-        // extractQwenResponse may throw on missing/error events;
-        // fall back to raw stdout so consumers can inspect it
+        // Classified agent errors (quota, rate-limit, auth, etc.) must propagate
+        // so the executor/batch runner can retry or fallback properly.
+        if (error instanceof AgentError) {
+          reject(error);
+          return;
+        }
+
+        // Non-classified errors (parsing failures, missing result event, etc.)
+        // — fall back to raw stdout so consumers can inspect it
         logger?.warn(`[Qwen] Failed to extract response: ${error instanceof Error ? error.message : String(error)}`);
         resolve({
           parsed: null,
